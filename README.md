@@ -9,9 +9,14 @@ or assets.
 
 ## What's in it
 
+- **3D presentation:** a broadcast-style camera behind the quarterback, a full stadium with crowd,
+  sponsor boards and goal posts, and animated players with helmets and jersey numbers. Round
+  receiver icons float above each target, and the player you control has a green ring and name
+  tag. On devices without WebGL the game falls back to a top-down 2D view. The native app locks
+  to landscape during games, like the original.
 - **Gameplay:** a real-time engine running 11 on 11. It has routes, blocking, pass rush, man and zone
   coverage, catch and interception contests, broken tackles, and field goals.
-  - **Offense:** call a play from 8 (3 runs and 5 passes), then tap **HIKE**. Tap a receiver
+  - **Offense:** call a play from 8 (3 runs and 5 passes), then tap **SNAP BALL**. Tap a receiver
     icon (A–E) to throw. A white ring means he's open. Drag anywhere to run, and use
     **JUKE**, **SPIN** and **TRUCK**, or hold **SPRINT**.
   - **Defense:** call one of 5 coverages, then control the highlighted defender.
@@ -23,7 +28,8 @@ or assets.
   offensive and 3 defensive possessions. Each new season raises the difficulty.
 - **Cards and packs:** Bronze, Silver, Gold and Elite tiers. Each player has 13 ratings that
   determine their OVR, and the Bronze, Silver, Gold and Pro packs have different odds.
-- **Lineup and collection:** 23 starting slots, an auto-fill option, and quick-sell for
+- **Lineup and collection:** a formation view with Offense, Defense and Special tabs, 23
+  starting slots, an auto-fill option, and quick-sell for
   coins. Team OVR comes from your starters.
 - **Progression:** coins, XP and levels. Stamina refills over time, and leveling up refills it
   completely.
@@ -39,6 +45,7 @@ npm install
 npm run dev        # http://localhost:5173. To test on a phone, open the "Network" URL Vite prints
 npm test           # engine, match and save tests
 npm run build      # production build in dist/
+npm run build:single  # one-file web build (three.js from a CDN) for shareable test links
 ```
 
 ## Shipping to iOS / Android
@@ -62,7 +69,8 @@ You can also install it as a home-screen app (PWA): deploy `dist/` to any static
 | `src/game/engine.ts` | Real-time play simulation: movement, AI, blocking, passing, tackling, kicking |
 | `src/game/plays.ts` | Offensive and defensive playbooks, formations, CPU play-calling |
 | `src/game/match.ts` | Downs, scoring, drives, possessions, event win conditions |
-| `src/game/render.ts` | Canvas field renderer (portrait and landscape) |
+| `src/game/render3d.ts` | 3D stadium, players, camera and animation (three.js) |
+| `src/game/render.ts` | Shared renderer interface and the 2D fallback renderer |
 | `src/ui/gameScreen.ts` | In-game HUD, play-call screen, joystick and buttons, game loop |
 | `src/ui/app.ts` | Menus: home, events, season, lineup, store, collection |
 | `src/data/*` | Player generation, ratings and OVR, lineups, packs, events and season schedule |

@@ -1,6 +1,8 @@
 import { Rng, defaultRng } from '../data/rng';
 import { PlayEngine, Input, Vec } from '../game/engine';
-import { FieldRenderer, RECEIVER_ICONS, Hud } from '../game/render';
+import { FieldRenderer, RECEIVER_ICONS, Hud, GameRenderer, openness } from '../game/render';
+import { Field3DRenderer } from '../game/render3d';
+import { ScreenOrientation } from '@capacitor/screen-orientation';
 import { Match, MatchConfig, ordinal, spotLabel, PlayReport } from '../game/match';
 import { OFFENSE_PLAYBOOK, DEFENSE_PLAYBOOK, OffPlay, DefPlay, cpuDefensePlay } from '../game/plays';
 import { fieldGoalChance } from '../game/engine';
@@ -27,6 +29,7 @@ export interface GameOptions {
 type Phase = 'call' | 'presnap' | 'live' | 'result' | 'between' | 'final';
 
 const STICK_RADIUS = 52;
+const STICK_SIZE = 112;
 
 export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOptions): () => void {
   const rng = opts.rng ?? defaultRng;
@@ -34,10 +37,10 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
   const wrap = el('div', 'game');
   wrap.innerHTML = `
     <canvas class="field"></canvas>
+    <div class="labels"></div>
     <div class="scorebug"></div>
-    <button class="quit-btn" aria-label="Quit">✕</button>
+    <button class="quit-btn" aria-label="Pause and quit">❚❚</button>
     <div class="stick"><div class="stick-knob"></div></div>
-    <div class="throw-btns"></div>
     <div class="action-btns"></div>
     <div class="overlay"></div>`;
   root.appendChild(wrap);
@@ -46,10 +49,11 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
   const scorebug = wrap.querySelector<HTMLElement>('.scorebug')!;
   const overlay = wrap.querySelector<HTMLElement>('.overlay')!;
   const actionBtns = wrap.querySelector<HTMLElement>('.action-btns')!;
-  const throwBtns = wrap.querySelector<HTMLElement>('.throw-btns')!;
+  const labels = wrap.querySelector<HTMLElement>('.labels')!;
   const stick = wrap.querySelector<HTMLElement>('.stick')!;
   const knob = wrap.querySelector<HTMLElement>('.stick-knob')!;
-  const renderer = new FieldRenderer(canvas);
+  const renderer: GameRenderer = Field3DRenderer.supported() ? new Field3DRenderer(canvas) : new FieldRenderer(canvas);
+  wrap.classList.toggle('view-3d', renderer instanceof Field3DRenderer);
 
   let engine: PlayEngine | null = null;
   let phase: Phase = 'call';
@@ -67,6 +71,7 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     firstDownY: match.drive.los + match.drive.toGo,
     userTeam: opts.userTeam,
     cpuTeam: opts.cpuTeam,
+    userSide: match.drive.side,
   });
 
   // ------------------------------------------------------------ HUD
@@ -75,48 +80,99 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     const d = match.drive;
     const userOff = d.side === 'off';
     const left = match.playsLeft;
+    const scen = config.scenario;
+    const down = `<div class="sb-down"><b>${ordinal(Math.min(4, d.down))} &amp; ${match.toGoLabel}</b><span>${spotLabel(d.los, userOff)}</span></div>`;
+    if (scen) {
+      const goal = { td: 'Score a touchdown', score: 'Put points on the board', 'first-down': 'Convert the first down', stop: 'Keep them out of the end zone' }[scen.goal];
+      scorebug.innerHTML = `
+        <div class="sb-objective"><i class="sb-swatch ${userOff ? 'user' : 'cpu'}"></i>${esc(goal)}</div>
+        ${down}
+        <div class="sb-chip">${scen.plays - (left ?? 0)}/${scen.plays} Plays</div>`;
+      return;
+    }
     scorebug.innerHTML = `
-      <div class="sb-team user"><span>${esc(abbr(opts.userTeam))}</span><b>${match.userScore}</b></div>
-      <div class="sb-mid">
-        <div class="sb-down">${ordinal(Math.min(4, d.down))} &amp; ${match.toGoLabel}</div>
-        <div class="sb-spot">${userOff ? 'OFF' : 'DEF'} · ${spotLabel(d.los, userOff)}${left !== null ? ` · ${left} play${left === 1 ? '' : 's'} left` : ''}</div>
-      </div>
-      <div class="sb-team cpu"><b>${match.cpuScore}</b><span>${esc(abbr(opts.cpuTeam))}</span></div>`;
+      <div class="sb-team user"><i class="sb-swatch user"></i><span>${esc(abbr(opts.userTeam))}</span><b>${match.userScore}</b></div>
+      <div class="sb-team cpu"><i class="sb-swatch cpu"></i><span>${esc(abbr(opts.cpuTeam))}</span><b>${match.cpuScore}</b></div>
+      ${down}
+      <div class="sb-chip">${userOff ? 'OFFENSE' : 'DEFENSE'}</div>`;
   }
 
   function renderActionButtons(): void {
     const userOff = match.drive.side === 'off';
+    wrap.classList.toggle('live', phase === 'live' || phase === 'presnap');
     if (phase !== 'live' && phase !== 'presnap') {
       actionBtns.innerHTML = '';
-      throwBtns.innerHTML = '';
       return;
     }
     if (phase === 'presnap') {
-      actionBtns.innerHTML = `<button class="btn-snap" data-act="snap">HIKE</button>`;
-      throwBtns.innerHTML = '';
+      actionBtns.innerHTML = `<button class="btn-snap" data-act="snap"><span class="ball-icon"></span>SNAP BALL</button>`;
       return;
     }
     actionBtns.innerHTML = userOff
       ? `<button data-act="juke">JUKE</button><button data-act="spin">SPIN</button><button data-act="truck">TRUCK</button><button data-act="sprint" class="sprint">SPRINT</button>`
-      : `<button data-act="switch">SWITCH</button><button data-act="dive">DIVE</button>`;
+      : `<button data-act="switch">SWITCH</button><button data-act="dive" class="big">DIVE</button>`;
   }
 
-  function renderThrowButtons(): void {
-    const show = !!engine && phase === 'live' && engine.userSide === 'off' && engine.canThrow();
-    wrap.classList.toggle('can-throw', show);
-    if (!show) {
-      if (throwBtns.childElementCount) throwBtns.innerHTML = '';
-      return;
+  // ------------------------------------------------------------ floating labels
+
+  const labelEls = new Map<string, HTMLElement>();
+  function label(key: string, make: () => HTMLElement): HTMLElement {
+    let e = labelEls.get(key);
+    if (!e) {
+      e = make();
+      labels.appendChild(e);
+      labelEls.set(key, e);
     }
-    if (throwBtns.childElementCount) return;
-    throwBtns.innerHTML = engine!
-      .eligibleReceivers()
-      .sort((a, b) => RECEIVER_ICONS[a.slot].label.localeCompare(RECEIVER_ICONS[b.slot].label))
-      .map((a) => {
-        const icon = RECEIVER_ICONS[a.slot];
-        return `<button data-throw="${a.slot}" style="background:${icon.color}"><b>${icon.label}</b><small>${esc(a.card.last)}</small></button>`;
-      })
-      .join('');
+    e.dataset.seen = '1';
+    return e;
+  }
+
+  /** Receiver throw icons, the controlled player's name tag, and move call-outs, projected from the field. */
+  function renderLabels(): void {
+    for (const e of labelEls.values()) e.dataset.seen = '';
+    if (engine) {
+      const canThrow = phase === 'live' && engine.userSide === 'off' && engine.canThrow();
+      if (canThrow || (phase === 'presnap' && engine.userSide === 'off' && engine.offPlay.type === 'pass')) {
+        for (const a of engine.eligibleReceivers()) {
+          const icon = RECEIVER_ICONS[a.slot];
+          const e = label(`rx-${a.slot}`, () => {
+            const b = el('button', 'rx-icon', `<b>${icon.label}</b><small>${esc(a.card.last)}</small>`);
+            b.dataset.throw = a.slot;
+            b.style.setProperty('--rx', icon.color);
+            return b;
+          });
+          // Keep icons for wide receivers on screen so they stay tappable.
+          const p = renderer.iconPos(a);
+          const x = Math.max(34, Math.min(wrap.clientWidth - 34, p.sx));
+          const y = Math.max(80, Math.min(wrap.clientHeight - 60, p.sy));
+          e.style.transform = `translate(${x}px, ${y}px)`;
+          const open = openness(engine, a);
+          e.classList.toggle('open', canThrow && open > 3);
+          e.classList.toggle('tight', canThrow && open <= 1.6);
+          e.classList.toggle('preview', !canThrow);
+        }
+      }
+      const c = engine.controlled;
+      if (c && !engine.over && phase !== 'call') {
+        const e = label('me', () => el('div', 'name-tag'));
+        e.textContent = c.card.last;
+        const p = renderer.toScreen(c.x, c.y, 0);
+        e.style.transform = `translate(${p.sx}px, ${p.sy + 14}px)`;
+      }
+      engine.floats.forEach((f, i) => {
+        const e = label(`fl-${i}`, () => el('div', 'float-text'));
+        e.textContent = f.text;
+        const p = renderer.toScreen(f.x, f.y, 2.4);
+        e.style.transform = `translate(${p.sx}px, ${p.sy - f.t * 40}px)`;
+        e.style.opacity = String(Math.max(0, 1 - f.t / 1.2));
+      });
+    }
+    for (const [k, e] of labelEls) {
+      if (!e.dataset.seen) {
+        e.remove();
+        labelEls.delete(k);
+      }
+    }
   }
 
   // ------------------------------------------------------------ play calling
@@ -149,6 +205,7 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
           <div>${esc(match.possessionLabel)}</div>
           <h2>${userOff ? 'Call your play' : 'Call a defense'}</h2>
           ${config.scenario ? `<div class="objective">${esc(config.scenario.desc)}</div>` : ''}
+          ${window.innerHeight > window.innerWidth ? '<div class="rotate-tip">Turn your phone sideways for the full stadium view</div>' : ''}
         </div>
         <div class="play-grid">
           ${plays
@@ -185,7 +242,7 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
       userSide: d.side,
       rng,
     });
-    renderer.focus(engine.ballPos().x, d.los + 4);
+    renderer.focus(engine.ballPos().x, d.los);
     overlay.innerHTML = `<div class="presnap-tag">${esc(userOff ? offPlay.name : defPlay.name)}${
       userOff ? '' : `<small>They're in ${esc(offPlay.type === 'run' ? 'a run look' : 'a pass look')}</small>`
     }</div>`;
@@ -312,9 +369,10 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     stickPointer = e.pointerId;
     stickOrigin = { x: e.clientX, y: e.clientY };
     stickVec = null;
-    stick.style.display = 'block';
-    stick.style.left = `${e.clientX - STICK_RADIUS}px`;
-    stick.style.top = `${e.clientY - STICK_RADIUS}px`;
+    stick.classList.add('active');
+    stick.style.left = `${e.clientX - STICK_SIZE / 2}px`;
+    stick.style.top = `${e.clientY - STICK_SIZE / 2}px`;
+    stick.style.bottom = 'auto';
     knob.style.transform = 'translate(0px, 0px)';
   }
 
@@ -333,7 +391,9 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     if (e.pointerId !== stickPointer) return;
     stickPointer = null;
     stickVec = null;
-    stick.style.display = 'none';
+    stick.classList.remove('active');
+    stick.style.left = stick.style.top = stick.style.bottom = '';
+    knob.style.transform = '';
   }
 
   function onAction(act: string, down: boolean): void {
@@ -425,7 +485,6 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     updateMoveFromInputs();
     if (phase === 'live' && engine) {
       engine.step(dt, input);
-      renderThrowButtons();
       if (engine.over) onPlayOver();
     } else if (phase === 'result') {
       engine?.step(dt, input);
@@ -434,6 +493,7 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     }
     wrap.classList.toggle('sprinting', input.sprint);
     renderer.draw(engine, hud(), dt, phase === 'presnap' && match.drive.side === 'off');
+    renderLabels();
     requestAnimationFrame(frame);
   }
 
@@ -445,11 +505,15 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     window.removeEventListener('keydown', kd);
     window.removeEventListener('keyup', ku);
     window.removeEventListener('resize', onResize);
+    renderer.dispose();
+    ScreenOrientation.unlock().catch(() => {});
     wrap.remove();
   }
 
+  // Games play in landscape on devices that allow locking (the native app); browsers just ignore it.
+  ScreenOrientation.lock({ orientation: 'landscape' }).catch(() => {});
   renderer.resize();
-  renderer.focus(26.65, match.drive.los + 4);
+  renderer.focus(26.65, match.drive.los);
   showPlayCall();
   requestAnimationFrame(frame);
   return cleanup;

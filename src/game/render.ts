@@ -1,4 +1,4 @@
-import { Actor, FIELD_W, PlayEngine, Vec } from './engine';
+import { Actor, FIELD_W, PlayEngine, Side, Vec } from './engine';
 
 export const USER_COLOR = '#1e6fd9';
 export const USER_TRIM = '#f5c542';
@@ -17,13 +17,27 @@ export interface Hud {
   firstDownY: number | null;
   userTeam: string;
   cpuTeam: string;
+  userSide: Side;
+}
+
+/** What the game screen needs from a field renderer (2D canvas or 3D WebGL). */
+export interface GameRenderer {
+  resize(): void;
+  focus(x: number, y: number): void;
+  draw(engine: PlayEngine | null, hud: Hud, dt: number, showRoutes: boolean): void;
+  /** Project a world point (yards, with optional height) to CSS pixels. */
+  toScreen(x: number, y: number, h?: number): { sx: number; sy: number };
+  screenDirToWorld(dx: number, dy: number): Vec;
+  /** Where the floating receiver icon for this player goes. */
+  iconPos(a: Actor): { sx: number; sy: number };
+  dispose(): void;
 }
 
 /**
  * Draws the field and players. Portrait screens show the offense driving up the screen;
  * landscape screens rotate the field so the offense drives to the right.
  */
-export class FieldRenderer {
+export class FieldRenderer implements GameRenderer {
   private ctx: CanvasRenderingContext2D;
   private camX = FIELD_W / 2;
   private camY = 30;
@@ -48,14 +62,13 @@ export class FieldRenderer {
     this.scale = this.landscape ? Math.max(9, this.h / 34) : Math.max(9, this.w / 34);
   }
 
-  /** World (yards) to CSS pixels. */
-  toScreen(x: number, y: number): { sx: number; sy: number } {
+  /** World (yards) to CSS pixels. Height is ignored in the top-down view. */
+  toScreen(x: number, y: number, _h = 0): { sx: number; sy: number } {
     const s = this.scale;
     if (this.landscape) return { sx: this.w * 0.4 + (y - this.camY) * s, sy: this.h / 2 + (x - this.camX) * s };
     return { sx: this.w / 2 + (x - this.camX) * s, sy: this.h * 0.62 - (y - this.camY) * s };
   }
 
-  /** Convert a joystick direction in screen space (dy down) to a world-space direction. */
   screenDirToWorld(dx: number, dy: number): Vec {
     return this.landscape ? { x: dy, y: dx } : { x: dx, y: -dy };
   }
@@ -87,9 +100,9 @@ export class FieldRenderer {
     for (const a of engine.actors) this.drawShadow(a);
     for (const a of engine.actors) this.drawActor(engine, a);
     this.drawBall(engine);
-    this.drawReceiverIcons(engine);
-    this.drawFloats(engine);
   }
+
+  dispose(): void {}
 
   private line(x1: number, y1: number, x2: number, y2: number): void {
     const a = this.toScreen(x1, y1);
@@ -256,49 +269,9 @@ export class FieldRenderer {
     ctx.stroke();
   }
 
-  /** Receiver target icons, tinted by how open each receiver is. */
-  private drawReceiverIcons(engine: PlayEngine): void {
-    if (engine.userSide !== 'off' || !engine.canThrow()) return;
-    const ctx = this.ctx;
-    for (const a of engine.eligibleReceivers()) {
-      const icon = RECEIVER_ICONS[a.slot];
-      if (!icon) continue;
-      const p = this.iconPos(a);
-      const open = openness(engine, a);
-      ctx.fillStyle = icon.color;
-      ctx.strokeStyle = open > 3 ? '#ffffff' : open > 1.6 ? '#ffd400' : '#222';
-      ctx.lineWidth = 3;
-      ctx.beginPath();
-      ctx.arc(p.sx, p.sy, 13, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 15px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(icon.label, p.sx, p.sy + 1);
-    }
-  }
-
   iconPos(a: Actor): { sx: number; sy: number } {
     const p = this.toScreen(a.x, a.y);
     return { sx: p.sx, sy: p.sy - (this.scale * 0.8 + 16) };
-  }
-
-  private drawFloats(engine: PlayEngine): void {
-    const ctx = this.ctx;
-    for (const f of engine.floats) {
-      const p = this.toScreen(f.x, f.y);
-      ctx.globalAlpha = Math.max(0, 1 - f.t / 1.2);
-      ctx.fillStyle = '#ffe94a';
-      ctx.strokeStyle = '#000';
-      ctx.lineWidth = 3;
-      ctx.font = '900 16px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.strokeText(f.text, p.sx, p.sy - 24 - f.t * 30);
-      ctx.fillText(f.text, p.sx, p.sy - 24 - f.t * 30);
-    }
-    ctx.globalAlpha = 1;
   }
 }
 

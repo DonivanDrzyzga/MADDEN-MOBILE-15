@@ -1,8 +1,8 @@
 import { Store, MAX_STAMINA, SEASON_GAME_STAMINA } from '../state/store';
 import { LIVE_EVENTS, Scenario, xpForLevel, SEASON_LENGTH } from '../data/events';
 import { PACKS } from '../data/packs';
-import { Position, quickSellValue, displayName } from '../data/players';
-import { ALL_SLOTS, DEFENSE_SLOTS, OFFENSE_SLOTS, SLOT_POSITION, Slot, generateCpuRoster } from '../data/lineup';
+import { Position, quickSellValue } from '../data/players';
+import { ALL_SLOTS, SLOT_POSITION, Slot, generateCpuRoster } from '../data/lineup';
 import { defaultRng } from '../data/rng';
 import { cardHtml, ratingsTable } from './card';
 import { confirmDialog, esc, fmt, modal, toast } from './dom';
@@ -13,6 +13,7 @@ type Screen = 'home' | 'events' | 'season' | 'lineup' | 'packs' | 'collection';
 export class App {
   private screen: Screen = 'home';
   private collectionFilter: Position | 'ALL' = 'ALL';
+  private lineupTab: 'offense' | 'defense' | 'special' = 'offense';
   private inGame = false;
 
   constructor(private root: HTMLElement, private store: Store) {
@@ -121,7 +122,7 @@ export class App {
       </div>
       <div class="howto">
         <h3>How to play</h3>
-        <p><b>Offense:</b> call a play, tap <b>HIKE</b>. On pass plays tap a receiver icon (A–E) to throw — a white ring means he's open. Drag anywhere on the field to run; use <b>JUKE</b>, <b>SPIN</b>, <b>TRUCK</b> and hold <b>SPRINT</b>.</p>
+        <p><b>Offense:</b> call a play, then tap <b>SNAP BALL</b>. On pass plays, tap the round icon above a receiver to throw; a white ring means he’s open. Drag anywhere on the field to run; use <b>JUKE</b>, <b>SPIN</b>, <b>TRUCK</b> and hold <b>SPRINT</b>.</p>
         <p><b>Defense:</b> call a coverage, then drag to move your highlighted defender. <b>SWITCH</b> jumps to the defender nearest the ball and <b>DIVE</b> lunges for the tackle. Let go of the stick and the AI plays for you.</p>
         <p class="muted">Keyboard: WASD/arrows, Space hike/dive, J/K/L moves, Shift sprint, 1–5 throw, Q switch.</p>
         <button class="btn ghost small" data-reset="1">Reset save</button>
@@ -174,21 +175,35 @@ export class App {
     const roster = this.store.roster();
     const lineup = this.store.data.lineup;
     const r = this.store.ratings();
-    const slotRow = (slot: Slot) => {
+    const tab = this.lineupTab;
+    // Rows run from downfield (top) to the backfield (bottom), like a formation chart.
+    const rows: Record<typeof tab, Slot[][]> = {
+      offense: [['WR1', 'TE', 'WR3', 'WR2'], ['LT', 'LG', 'C', 'RG', 'RT'], ['QB'], ['HB']],
+      defense: [['FS', 'SS'], ['CB1', 'LOLB', 'MLB', 'ROLB', 'CB2'], ['LE', 'DT1', 'DT2', 'RE']],
+      special: [['K']],
+    };
+    const slotCard = (slot: Slot) => {
       const c = roster[slot];
       const filled = !!lineup[slot];
-      return `<button class="slot tier-${filled ? c.tier : 'empty'}" data-slot="${slot}">
-        <span class="slot-name">${slot}</span>
-        <span class="slot-ovr">${filled ? c.ovr : '—'}</span>
-        <span class="slot-player">${filled ? esc(displayName(c)) : 'Empty'}</span>
+      return `<button class="fslot tier-${filled ? c.tier : 'empty'}" data-slot="${slot}">
+        <span class="fslot-ovr">${filled ? c.ovr : '+'}</span>
+        <span class="fslot-pos">${slot}</span>
+        <span class="fslot-name">${filled ? esc(c.last) : 'Empty'}</span>
       </button>`;
     };
+    const unit = tab === 'offense' ? `${r.off} OFFENSE` : tab === 'defense' ? `${r.def} DEFENSE` : `${roster.K.ovr} KICKER`;
     return `
-      <h2 class="screen-title">Lineup <small>OVR ${r.ovr} · OFF ${r.off} · DEF ${r.def}</small></h2>
-      <div class="row-actions"><button class="btn primary small" data-autofill="1">Auto-fill best</button><button class="btn small" data-go="collection">Collection</button></div>
-      <h3 class="group">Offense</h3><div class="slots">${OFFENSE_SLOTS.map(slotRow).join('')}</div>
-      <h3 class="group">Defense</h3><div class="slots">${DEFENSE_SLOTS.map(slotRow).join('')}</div>
-      <h3 class="group">Special Teams</h3><div class="slots">${slotRow('K')}</div>`;
+      <div class="lineup-head">
+        <h2 class="screen-title">Manage Lineup</h2>
+        <div class="lineup-ovr"><b>${r.ovr}</b><span>${unit}</span></div>
+      </div>
+      <div class="lineup-tabs">
+        ${(['offense', 'defense', 'special'] as const).map((t) => `<button class="${t === tab ? 'active' : ''}" data-ltab="${t}">${t}</button>`).join('')}
+      </div>
+      <div class="formation ${tab}">
+        ${rows[tab].map((row) => `<div class="frow">${row.map(slotCard).join('')}</div>`).join('')}
+      </div>
+      <div class="row-actions"><button class="btn primary small" data-autofill="1">Auto-fill best</button><button class="btn small" data-go="collection">Collection</button></div>`;
   }
 
   private packsHtml(): string {
@@ -236,6 +251,10 @@ export class App {
       return toast('Lineup set to your best players');
     }
     if (ds.slot) return this.pickForSlot(ds.slot as Slot);
+    if (ds.ltab) {
+      this.lineupTab = ds.ltab as 'offense' | 'defense' | 'special';
+      return this.render();
+    }
     if (ds.filter) {
       this.collectionFilter = ds.filter as Position | 'ALL';
       return this.render();

@@ -12,15 +12,19 @@
     "test": "vitest run",
     "cap:sync": "npm run build && cap sync",
     "cap:android": "npm run cap:sync && cap open android",
-    "cap:ios": "npm run cap:sync && cap open ios"
+    "cap:ios": "npm run cap:sync && cap open ios",
+    "build:single": "tsc --noEmit && vite build --mode single && node scripts/inline-single.mjs"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.3",
+    "@types/three": "0.160.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.5",
     "vitest": "^5.0.5"
   },
   "dependencies": {
-    "@capacitor/core": "^8.5.3"
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/screen-orientation": "^8.0.2",
+    "three": "0.160.1"
   }
 }
