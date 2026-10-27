@@ -14,6 +14,21 @@ or assets.
   receiver icons float above each target, and the player you control has a green ring and name
   tag. On devices without WebGL the game falls back to a top-down 2D view. The native app locks
   to landscape during games, like the original.
+- **Player models:** jointed bodies (knees, elbows, hips) with textured jerseys that carry the
+  player's name and number, striped glossy helmets with facemasks, skin tones, gloves and
+  cleats. Bodies lean into acceleration, bank into turns, counter-rotate shoulders against
+  hips, and fall along the direction of the hit. Linemen set in three-point stances.
+- **Physics:** every player has a body weight from position and strength. Speed builds over a
+  few steps, braking and turning have limits, and a sprinting player carves an arc instead of
+  snapping to a new direction. Collisions trade momentum by mass, run blocks drive defenders
+  out of the lane (and sometimes pancake them), and tackles land along the combined momentum,
+  so runners fall forward for extra yards or get driven back by a big hit.
+  - **Spin:** a real 360° turn that keeps most of the runner's speed and curls away from
+    contact. A defender who hits him mid-spin gets spun off.
+  - **Juke:** plants the outside foot and trades forward speed for a burst sideways. Push the
+    stick left or right to pick the side.
+  - **Truck:** lowers the shoulder. Weight and speed against the tackler's weight and
+    technique decide who goes down.
 - **Gameplay:** a real-time engine running 11 on 11. It has routes, blocking, pass rush, man and zone
   coverage, catch and interception contests, broken tackles, and field goals.
   - **Offense:** call a play from 8 (3 runs and 5 passes), then tap **SNAP BALL**. Tap a receiver
@@ -43,7 +58,7 @@ and truck, Shift sprints, 1–5 throw, and Q switches.
 ```bash
 npm install
 npm run dev        # http://localhost:5173. To test on a phone, open the "Network" URL Vite prints
-npm test           # engine, match and save tests
+npm test           # engine, physics, match and save tests
 npm run build      # production build in dist/
 npm run build:single  # one-file web build (three.js from a CDN) for shareable test links
 ```
@@ -69,7 +84,8 @@ You can also install it as a home-screen app (PWA): deploy `dist/` to any static
 | `src/game/engine.ts` | Real-time play simulation: movement, AI, blocking, passing, tackling, kicking |
 | `src/game/plays.ts` | Offensive and defensive playbooks, formations, CPU play-calling |
 | `src/game/match.ts` | Downs, scoring, drives, possessions, event win conditions |
-| `src/game/render3d.ts` | 3D stadium, players, camera and animation (three.js) |
+| `src/game/render3d.ts` | 3D stadium, camera, lighting, shadows and ball (three.js) |
+| `src/game/playerModel.ts` | Jointed player model, jersey/helmet textures, physics-driven poses |
 | `src/game/render.ts` | Shared renderer interface and the 2D fallback renderer |
 | `src/ui/gameScreen.ts` | In-game HUD, play-call screen, joystick and buttons, game loop |
 | `src/ui/app.ts` | Menus: home, events, season, lineup, store, collection |

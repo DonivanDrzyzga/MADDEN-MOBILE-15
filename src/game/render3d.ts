@@ -1,37 +1,14 @@
 import * as THREE from 'three';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { Actor, CENTER_X, FIELD_W, PlayEngine, Side, Vec } from './engine';
 import { GameRenderer, Hud, RECEIVER_ICONS } from './render';
+import { AWAY_LOOK, HOME_LOOK, PlayerRig, buildRig, poseRig } from './playerModel';
 
 /**
  * Broadcast-style 3D view in the spirit of 2015 mobile football: the camera sits high behind
  * the user's side of the ball and looks downfield. World yards map to three.js units 1:1 with
  * x across the field, y up, and z = -(yards from the offense's goal line).
  */
-
-interface TeamLook {
-  jersey: string;
-  pants: string;
-  helmet: string;
-  trim: string;
-  numberColor: string;
-}
-
-const USER_LOOK: TeamLook = { jersey: '#1f5fbf', pants: '#e9edf3', helmet: '#16397a', trim: '#f5c542', numberColor: '#ffffff' };
-const CPU_LOOK: TeamLook = { jersey: '#f2f2f2', pants: '#b8202b', helmet: '#b8202b', trim: '#1a1a1a', numberColor: '#b8202b' };
-
-interface PlayerRig {
-  root: THREE.Group;
-  body: THREE.Group; // tilts for stances, dives and falls
-  legL: THREE.Group;
-  legR: THREE.Group;
-  armL: THREE.Group;
-  armR: THREE.Group;
-  shadow: THREE.Mesh;
-  phase: number;
-  yaw: number;
-  fall: number;
-  key: string;
-}
 
 const toZ = (y: number) => -y;
 
@@ -58,29 +35,42 @@ export class Field3DRenderer implements GameRenderer {
   private fieldCanvas = document.createElement('canvas');
   private fieldKey = '';
   private matCache = new Map<string, THREE.Material>();
-  private numberTex = new Map<string, THREE.CanvasTexture>();
-  private geo = {
-    leg: new THREE.CapsuleGeometry(0.12, 0.62, 3, 8),
-    arm: new THREE.CapsuleGeometry(0.085, 0.44, 3, 8),
-    torso: new THREE.BoxGeometry(0.56, 0.6, 0.32),
-    pads: new THREE.BoxGeometry(0.8, 0.17, 0.42),
-    helmet: new THREE.SphereGeometry(0.19, 16, 12),
-    mask: new THREE.BoxGeometry(0.26, 0.12, 0.05),
-    number: new THREE.PlaneGeometry(0.4, 0.34),
-    shadow: new THREE.CircleGeometry(0.5, 20),
-  };
+  private sun: THREE.DirectionalLight;
+  private handPos = new THREE.Vector3();
 
   constructor(private canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.shadowMap.enabled = true;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     this.scene.background = new THREE.Color('#7da7d9');
     this.scene.fog = new THREE.Fog('#7da7d9', 120, 260);
-    this.scene.add(new THREE.HemisphereLight('#dfefff', '#3a5a2a', 1.6));
-    const sun = new THREE.DirectionalLight('#fff4e0', 1.6);
-    sun.position.set(-40, 80, 30);
+    // Soft image-based light gives helmets and jerseys real highlights.
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+    pmrem.dispose();
+    this.scene.add(new THREE.HemisphereLight('#dfefff', '#3a5a2a', 0.9));
+    // Stadium light: casts the player shadows. Its shadow box follows the play.
+    const sun = new THREE.DirectionalLight('#fff1dc', 2.4);
+    sun.castShadow = true;
+    const small = Math.min(window.innerWidth, window.innerHeight) < 600;
+    sun.shadow.mapSize.set(small ? 1024 : 2048, small ? 1024 : 2048);
+    const sc = sun.shadow.camera;
+    sc.left = -26;
+    sc.right = 26;
+    sc.top = 26;
+    sc.bottom = -26;
+    sc.near = 1;
+    sc.far = 140;
+    sun.shadow.bias = -0.0005;
+    sun.shadow.normalBias = 0.02;
     this.scene.add(sun);
+    this.scene.add(sun.target);
+    this.sun = sun;
 
     // Field: one canvas texture with stripes, lines, numbers and end zones.
     this.fieldCanvas.width = 1024;
@@ -91,6 +81,7 @@ export class Field3DRenderer implements GameRenderer {
     const field = new THREE.Mesh(new THREE.PlaneGeometry(FIELD_W + 4, 124), new THREE.MeshLambertMaterial({ map: this.fieldTex }));
     field.rotation.x = -Math.PI / 2;
     field.position.set(CENTER_X, 0, toZ(50));
+    field.receiveShadow = true;
     this.scene.add(field);
     this.drawFieldTexture('Home', 'Away', true);
 
@@ -113,10 +104,11 @@ export class Field3DRenderer implements GameRenderer {
     this.ring.position.y = 0.04;
     this.scene.add(this.ring);
 
-    this.ball = new THREE.Mesh(new THREE.SphereGeometry(0.18, 16, 10), new THREE.MeshLambertMaterial({ color: '#7a3d17' }));
-    this.ball.scale.set(1, 0.62, 0.62);
+    this.ball = new THREE.Mesh(new THREE.SphereGeometry(0.16, 20, 12), new THREE.MeshStandardMaterial({ map: footballTexture(), roughness: 0.55 }));
+    this.ball.scale.set(1.0, 0.62, 0.62);
+    this.ball.castShadow = true;
     this.scene.add(this.ball);
-    this.ballShadow = new THREE.Mesh(this.geo.shadow, new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.3, depthWrite: false }));
+    this.ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.3, depthWrite: false }));
     this.ballShadow.rotation.x = -Math.PI / 2;
     this.ballShadow.scale.setScalar(0.35);
     this.scene.add(this.ballShadow);
@@ -161,15 +153,19 @@ export class Field3DRenderer implements GameRenderer {
   private placeCamera(): void {
     const portrait = this.w < this.h;
     // Landscape matches the classic behind-the-QB broadcast angle; portrait climbs higher to fit more width.
-    const back = portrait ? 13 : 17;
-    const height = portrait ? 21 : 10.5;
-    const ahead = portrait ? 9 : 12;
+    const back = portrait ? 13 : 15.5;
+    const height = portrait ? 21 : 9.5;
+    const ahead = portrait ? 9 : 11;
     const dir = this.camSide === 'off' ? 1 : -1;
     const camWorldY = this.camY - back * dir;
     this.camera.position.set(this.camX, height, toZ(camWorldY));
     this.camera.lookAt(this.camX, 0, toZ(this.camY + ahead * dir));
     // Near the goal line the camera sits in the end zone; hide that goal post so it doesn't block the play.
     for (const p of this.posts) p.mesh.visible = Math.abs(camWorldY - p.y) > 12;
+    // Keep the shadow box centred on the action.
+    const fz = toZ(this.camY + 4 * dir);
+    this.sun.target.position.set(this.camX, 0, fz);
+    this.sun.position.set(this.camX - 30, 70, fz + 25);
   }
 
   screenDirToWorld(dx: number, dy: number): Vec {
@@ -233,147 +229,33 @@ export class Field3DRenderer implements GameRenderer {
     return m;
   }
 
-  private numberMaterial(n: number, look: TeamLook): THREE.Material {
-    const key = `${n}|${look.numberColor}|${look.trim}`;
-    let tex = this.numberTex.get(key);
-    if (!tex) {
-      const c = document.createElement('canvas');
-      c.width = 128;
-      c.height = 108;
-      const g = c.getContext('2d')!;
-      g.font = '900 92px Arial Narrow, Arial, sans-serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.lineWidth = 8;
-      g.strokeStyle = look.trim;
-      g.strokeText(String(n), 64, 58);
-      g.fillStyle = look.numberColor;
-      g.fillText(String(n), 64, 58);
-      tex = new THREE.CanvasTexture(c);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      this.numberTex.set(key, tex);
-    }
-    return new THREE.MeshLambertMaterial({ map: tex, transparent: true });
-  }
-
-  private buildRig(a: Actor, look: TeamLook): PlayerRig {
-    const root = new THREE.Group();
-    const body = new THREE.Group();
-    root.add(body);
-    const limb = (geo: THREE.BufferGeometry, color: string, x: number, y: number, len: number) => {
-      const pivot = new THREE.Group();
-      pivot.position.set(x, y, 0);
-      const m = new THREE.Mesh(geo, this.mat(color));
-      m.position.y = -len / 2;
-      pivot.add(m);
-      body.add(pivot);
-      return pivot;
-    };
-    const legL = limb(this.geo.leg, look.pants, -0.14, 0.95, 0.86);
-    const legR = limb(this.geo.leg, look.pants, 0.14, 0.95, 0.86);
-    const torso = new THREE.Mesh(this.geo.torso, this.mat(look.jersey));
-    torso.position.y = 1.26;
-    body.add(torso);
-    const pads = new THREE.Mesh(this.geo.pads, this.mat(look.jersey));
-    pads.position.y = 1.58;
-    body.add(pads);
-    const armL = limb(this.geo.arm, look.jersey, -0.42, 1.56, 0.6);
-    const armR = limb(this.geo.arm, look.jersey, 0.42, 1.56, 0.6);
-    armL.rotation.z = -0.15;
-    armR.rotation.z = 0.15;
-    const helmet = new THREE.Mesh(this.geo.helmet, this.mat(look.helmet));
-    helmet.position.y = 1.86;
-    helmet.scale.set(1, 1.05, 1.12);
-    body.add(helmet);
-    const mask = new THREE.Mesh(this.geo.mask, this.mat('#9aa3ad'));
-    mask.position.set(0, 1.8, 0.2);
-    body.add(mask);
-    const numMat = this.numberMaterial(a.card.number, look);
-    const back = new THREE.Mesh(this.geo.number, numMat);
-    back.position.set(0, 1.27, -0.165);
-    back.rotation.y = Math.PI;
-    body.add(back);
-    const front = new THREE.Mesh(this.geo.number, numMat);
-    front.position.set(0, 1.27, 0.165);
-    body.add(front);
-    const shadow = new THREE.Mesh(this.geo.shadow, new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.32, depthWrite: false }));
-    shadow.rotation.x = -Math.PI / 2;
-    shadow.position.y = 0.02;
-    this.scene.add(shadow);
-    this.scene.add(root);
-    return { root, body, legL, legR, armL, armR, shadow, phase: Math.random() * 6, yaw: 0, fall: 0, key: `${a.card.id}|${look.jersey}` };
-  }
-
   private syncPlayers(engine: PlayEngine, dt: number): void {
     if (this.rigEngine !== engine) {
       // Rebuild rigs only when the lineup on the field changes; reuse them between plays.
       const wanted = new Set<number>();
       for (const a of engine.actors) {
-        const look = a.side === engine.userSide ? USER_LOOK : CPU_LOOK;
+        const look = a.side === engine.userSide ? HOME_LOOK : AWAY_LOOK;
         const key = `${a.card.id}|${look.jersey}`;
         let rig = this.rigs.get(a.id);
         if (rig && rig.key !== key) {
-          this.removeRig(rig);
+          this.scene.remove(rig.root);
           rig = undefined;
         }
-        if (!rig) this.rigs.set(a.id, this.buildRig(a, look));
-        const r = this.rigs.get(a.id)!;
-        r.fall = 0;
-        r.yaw = a.side === 'off' ? Math.PI : 0;
+        if (!rig) {
+          rig = buildRig(a, look);
+          this.scene.add(rig.root);
+          this.rigs.set(a.id, rig);
+        }
+        rig.fall = 0;
+        rig.lean = 0;
+        rig.bank = 0;
+        rig.yaw = a.side === 'off' ? Math.PI : 0;
         wanted.add(a.id);
       }
-      for (const [id, rig] of this.rigs) if (!wanted.has(id)) { this.removeRig(rig); this.rigs.delete(id); }
+      for (const [id, rig] of this.rigs) if (!wanted.has(id)) { this.scene.remove(rig.root); this.rigs.delete(id); }
       this.rigEngine = engine;
     }
-    const carrier = engine.carrier();
-    const outcome = engine.outcome;
-    const downed = engine.over && outcome && ['tackle', 'sack', 'fumble'].includes(outcome.kind);
-    for (const a of engine.actors) {
-      const rig = this.rigs.get(a.id)!;
-      const speed = Math.hypot(a.vx, a.vy);
-      rig.root.position.set(a.x, 0, toZ(a.y));
-      rig.shadow.position.set(a.x + 0.15, 0.02, toZ(a.y) + 0.1);
-      // Face the direction of travel; idle players face the line of scrimmage.
-      // The model faces local +z; world (vx, vy) points along three.js (vx, -vy).
-      let targetYaw = a.side === 'off' ? Math.PI : 0;
-      if (speed > 0.6) targetYaw = Math.atan2(a.vx, -a.vy);
-      let dy = targetYaw - rig.yaw;
-      while (dy > Math.PI) dy -= Math.PI * 2;
-      while (dy < -Math.PI) dy += Math.PI * 2;
-      rig.yaw += dy * Math.min(1, dt * 10);
-      rig.root.rotation.y = rig.yaw;
-
-      // Stride animation scales with speed.
-      rig.phase += dt * (3 + speed * 1.6);
-      const amp = Math.min(1, speed / 6) * 0.85;
-      const s = Math.sin(rig.phase);
-      rig.legL.rotation.x = s * amp;
-      rig.legR.rotation.x = -s * amp;
-      rig.armL.rotation.x = -s * amp * 0.9;
-      rig.armR.rotation.x = s * amp * 0.9;
-
-      // Body lean: stance before the snap, forward lean when running, falls and dives.
-      const lineman = a.card.pos === 'OL' || a.card.pos === 'DL';
-      let lean = speed * 0.035;
-      let drop = 0;
-      if (engine.t === 0 && lineman) { lean = 0.75; drop = 0.32; }
-      else if (engine.t === 0 && a.slot !== 'QB') { lean = 0.25; drop = 0.08; }
-      let fallTarget = 0;
-      if (a.dive > 0) fallTarget = 1.25;
-      else if (a.stun > 0.25) fallTarget = 0.9;
-      if (downed && a === carrier) fallTarget = 1.45;
-      if (engine.over && a.dive === 0 && a.engaged === null && a !== carrier && a.stun > 0) fallTarget = 1.2;
-      rig.fall += (fallTarget - rig.fall) * Math.min(1, dt * 9);
-      if (a.engaged) { lean = 0.5; rig.armL.rotation.x = -1.2; rig.armR.rotation.x = -1.2; }
-      if (a === carrier) rig.armR.rotation.x = -0.9;
-      rig.body.rotation.x = Math.max(lean, rig.fall);
-      rig.body.position.y = -drop - rig.fall * 0.35;
-    }
-  }
-
-  private removeRig(rig: PlayerRig): void {
-    this.scene.remove(rig.root);
-    this.scene.remove(rig.shadow);
+    for (const a of engine.actors) poseRig(this.rigs.get(a.id)!, a, engine, dt);
   }
 
   private syncBall(engine: PlayEngine): void {
@@ -385,19 +267,25 @@ export class Field3DRenderer implements GameRenderer {
       y = 1.9 + (1.3 - 1.9) * k + b.h;
       const dx = ball.to.x - ball.from.x;
       const dz = toZ(ball.to.y) - toZ(ball.from.y);
-      this.ball.rotation.set(0, Math.atan2(dx, dz) - Math.PI / 2, 0);
+      // Nose follows the arc; the ball spirals around its long axis.
+      const climb = Math.atan(((1 - 2 * k) * 4 * Math.min(12, Math.hypot(dx, dz) * 0.25)) / Math.max(1, Math.hypot(dx, dz)));
+      this.ball.rotation.set(ball.t * 40, Math.atan2(dx, dz) - Math.PI / 2, climb, 'YZX');
     } else if (ball.state === 'dead') {
       y = 0.2;
     }
     let x = b.x;
     let z = toZ(b.y);
     if (ball.state === 'held') {
-      // Tuck the ball in front of the carrier.
+      // The ball sits in the carrier's tucking hand, so it moves with the arm and the body.
       const rig = this.rigs.get(ball.carrier.id);
-      const yaw = rig ? rig.root.rotation.y : 0;
-      x += Math.sin(yaw) * 0.3 + Math.cos(yaw) * 0.22;
-      z += Math.cos(yaw) * 0.3 - Math.sin(yaw) * 0.22;
-      this.ball.rotation.set(0, yaw + Math.PI / 2, 0.4);
+      if (rig) {
+        rig.root.updateMatrixWorld(true);
+        rig.handL.getWorldPosition(this.handPos);
+        x = this.handPos.x;
+        y = this.handPos.y + 0.04;
+        z = this.handPos.z;
+        this.ball.rotation.set(0, rig.root.rotation.y + Math.PI / 2, 0.5, 'YZX');
+      }
     }
     this.ball.position.set(x, y, z);
     this.ballShadow.position.set(x, 0.025, z);
@@ -645,4 +533,28 @@ export class Field3DRenderer implements GameRenderer {
       }
     }
   }
+}
+
+/** Pebbled leather with white laces and stripes. Sphere UVs: u wraps the long axis' girth. */
+function footballTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 128;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#6e3416';
+  g.fillRect(0, 0, 256, 128);
+  for (let i = 0; i < 1600; i++) {
+    g.fillStyle = Math.random() < 0.5 ? 'rgba(0,0,0,0.12)' : 'rgba(255,220,180,0.06)';
+    g.fillRect(Math.random() * 256, Math.random() * 128, 2, 2);
+  }
+  // Seams and stripes near the ends of the ball (top and bottom of the texture).
+  g.fillStyle = '#f2efe8';
+  g.fillRect(0, 16, 256, 5);
+  g.fillRect(0, 107, 256, 5);
+  // Laces across the top.
+  g.fillRect(52, 52, 5, 24);
+  for (let i = 0; i < 8; i++) g.fillRect(44, 54 + i * 3, 21, 1.6);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
 }
