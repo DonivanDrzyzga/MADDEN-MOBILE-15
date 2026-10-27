@@ -5,7 +5,7 @@ import { Position, quickSellValue, displayName } from '../data/players';
 import { ALL_SLOTS, DEFENSE_SLOTS, OFFENSE_SLOTS, SLOT_POSITION, Slot, generateCpuRoster } from '../data/lineup';
 import { defaultRng } from '../data/rng';
 import { cardHtml, ratingsTable } from './card';
-import { esc, fmt, modal, toast } from './dom';
+import { confirmDialog, esc, fmt, modal, toast } from './dom';
 import { startGame, GameResult } from './gameScreen';
 
 type Screen = 'home' | 'events' | 'season' | 'lineup' | 'packs' | 'collection';
@@ -242,7 +242,7 @@ export class App {
     }
     if (ds.card) return this.showCard(ds.card);
     if (ds.reset) {
-      if (confirm('Erase all progress and start over?')) this.store.reset();
+      void confirmDialog('Erase all progress and start over?', 'Erase').then((yes) => yes && this.store.reset());
     }
   }
 

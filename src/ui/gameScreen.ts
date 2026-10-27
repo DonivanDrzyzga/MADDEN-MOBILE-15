@@ -4,7 +4,7 @@ import { FieldRenderer, RECEIVER_ICONS, Hud } from '../game/render';
 import { Match, MatchConfig, ordinal, spotLabel, PlayReport } from '../game/match';
 import { OFFENSE_PLAYBOOK, DEFENSE_PLAYBOOK, OffPlay, DefPlay, cpuDefensePlay } from '../game/plays';
 import { fieldGoalChance } from '../game/engine';
-import { esc, el } from './dom';
+import { esc, el, confirmDialog } from './dom';
 
 export interface GameResult {
   won: boolean;
@@ -383,9 +383,10 @@ export function startGame(root: HTMLElement, config: MatchConfig, opts: GameOpti
     if (t.closest('[data-next]') && phase === 'between') return showPlayCall();
   });
 
-  wrap.querySelector<HTMLElement>('.quit-btn')!.onclick = () => {
+  wrap.querySelector<HTMLElement>('.quit-btn')!.onclick = async () => {
     if (phase === 'final') return;
-    if (!confirm('Quit this game? You will not earn any rewards.')) return;
+    if (!(await confirmDialog('Quit this game? You will not earn any rewards.', 'Quit'))) return;
+    if (!running) return;
     cleanup();
     opts.onExit(null);
   };

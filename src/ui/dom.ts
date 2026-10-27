@@ -39,3 +39,25 @@ export function toast(text: string): void {
     setTimeout(() => t.remove(), 300);
   }, 2200);
 }
+
+/** In-page yes/no dialog (native confirm() is blocked in some embedded web views). */
+export function confirmDialog(text: string, yesLabel: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    modal(
+      `<p class="confirm-text">${esc(text)}</p>
+       <div class="confirm-actions">
+         <button class="btn ghost" data-action="no">Cancel</button>
+         <button class="btn danger" data-action="yes">${esc(yesLabel)}</button>
+       </div>`,
+      (target, done) => {
+        done();
+        resolve(target.dataset.action === 'yes');
+      },
+      'confirm',
+    );
+    // Tapping outside the dialog dismisses it, which counts as "no".
+    document.querySelector('.modal-backdrop:last-child')?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) resolve(false);
+    });
+  });
+}

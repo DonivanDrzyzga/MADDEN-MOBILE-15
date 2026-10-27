@@ -286,3 +286,8 @@ h1, h2, h3 { margin: 0; letter-spacing: 0.02em; }
   .action-btns button { width: 64px; height: 64px; }
   .throw-btns { left: auto; right: 160px; transform: none; }
 }
+
+.modal.confirm { width: min(340px, 100%); text-align: center; }
+.confirm-text { margin: 4px 0 16px; font-size: 17px; line-height: 1.4; }
+.confirm-actions { display: flex; gap: 10px; justify-content: center; }
+.modal-backdrop { z-index: 100; }
